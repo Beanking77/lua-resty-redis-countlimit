@@ -1,8 +1,6 @@
 # Name
 
-[![Build Status](https://travis-ci.org/timebug/lua-resty-redis-ratelimit.svg)](https://travis-ci.org/timebug/lua-resty-redis-ratelimit)
-
-lua-resty-redis-ratelimit - Limit the request processing rate between multiple NGINX instances backed by [Redis](https://redis.io/).
+lua-resty-redis-countlimit - Limit the request processing number between multiple NGINX instances backed by [Redis](https://redis.io/).
 
 # Table of Contents
 
@@ -12,7 +10,6 @@ lua-resty-redis-ratelimit - Limit the request processing rate between multiple N
 * [Methods](#methods)
     * [new](#new)
     * [incoming](#incoming)
-    * [set_burst](#set_burst)
 * [Author](#author)
 * [Copyright and License](#copyright-and-license)
 * [See Also](#see-also)
@@ -23,22 +20,21 @@ Ready for testing. Probably production ready in most cases, though not yet prove
 
 # Description
 
-This lua library is a request processing rate limit module for ngx_lua:
+This lua library is a request processing counts limit module for ngx_lua:
 
 http://wiki.nginx.org/HttpLuaModule
 
-It is used to limit the request processing rate per a defined key between multiple NGINX instances. The limitation is done using the "[leaky bucket](http://en.wikipedia.org/wiki/Leaky_bucket)" method.
+It is used to limit the request processing number per a defined key between multiple NGINX instances. The limitation is done using the "[leaky bucket](http://en.wikipedia.org/wiki/Leaky_bucket)" method.
 
 ![](./leaky_bucket.png)
 
 This module use Redis (>= [2.6.0](http://redis.io/commands/eval)) as the backend storage, so you also need the [lua-resty-redis](https://github.com/openresty/lua-resty-redis) library work with it.
 
-**NOTICE:** If you do not use the `duration` feature and the incoming traffic is **evenly distrbuted**, it is recommended that use the module [resty.limit.req](https://github.com/openresty/lua-resty-limit-traffic/blob/master/lib/resty/limit/req.md) to avoid unnecessary network delays.
 
 # Synopsis
 
 ````lua
-lua_package_path "/path/to/lua-resty-redis-ratelimit/lib/?.lua;;";
+lua_package_path "/path/to/lua-resty-redis-countlimit/lib/?.lua;;";
 
 server {
 
@@ -46,12 +42,13 @@ server {
 
     location /t {
         access_by_lua_block {
-            local ratelimit = require "resty.redis.ratelimit"
-
-            local lim, err = ratelimit.new("one", "2r/s", 0, 2)
+            local countlimit = require "resty.redis.countlimit"
+            
+            -- Allow 10 requests in 2 second 
+            local lim, err = countlimit.new("one", 10, 2)
             if not lim then
                 ngx.log(ngx.ERR,
-                        "failed to instantiate a resty.redis.ratelimit object: ", err)
+                        "failed to instantiate a resty.redis.countlimit object: ", err)
                 return ngx.exit(500)
             end
 
@@ -101,16 +98,17 @@ server {
 
 ## new
 
-**syntax:** `obj, err = class.new(zone, rate, burst, duration)`
+**syntax:** `obj, err = class.new(zone, count, time_window)`
 
-Instantiates an object of this class. The class value is returned by the call require `resty.redis.ratelimit`.
+Instantiates an object of this class. The class value is returned by the call require `resty.redis.countlimit`.
 
 This method takes the following arguments:
 
 * `zone`: Sets the namespace, in particular, we use `<zone>:<key>` string as a unique state identifier inside Redis.
-* `rate`: The rate is specified in requests per second (r/s). If a rate of less than one request per second is desired, it is specified in request per minute (r/m). For example, half-request per second is 30r/m.
-* `burst`: Defines how many requests can make in excess of the rate specified by the zone, default 0.
-* `duration`: The time delay (in seconds) before back to normal state, during this period, the request is always `rejected`, default 0.
+
+* `count` is the specified number of requests threshold.
+
+* `time_window` is the time window in seconds before the request count is reset.
 
 On failure, this method returns nil and a string describing the error.
 
@@ -137,28 +135,19 @@ This method accepts the following arguments:
 
 The return values depend on the following cases:
 
-1. If the request does not exceed the `rate` value specified in the [new](#new) method, then this method returns `0` as the delay and the (zero) number of excessive requests per second at the current time.
-2. If the request exceeds the `rate` limit specified in the [new](#new) method but not the `rate` + `burst` value, then this method returns a proper delay (in seconds) for the current request so that it still conform to the `rate` threshold as if it came a bit later rather than now. The 2nd return value indicating the number of excessive reqeusts per second at this point (including the current request).
-3. If the request exceeds the `rate` + `burst` limit, then this method returns `nil` and the error string `"rejected"`.
-4. If an error occurred, then this method returns `nil` and a string describing the error. Such as `"failed to create redis - connection refused"`.
+1. If the request does not exceed the `count` value specified in the [new](#new) method, then this method returns `0` as the delay and the remaining count of allowed requests at the current time (as the 2nd return value).
+2. If the request exceeds the `count` limit specified in the [new](#new) method then this method returns `nil` and the error string `"rejected"`.
+3. If an error occurred, then this method returns `nil` and a string describing the error. Such as `"failed to create redis - connection refused"`.
 
 This method never sleeps itself. It simply returns a delay if necessary and requires the caller to later invoke the [ngx.sleep](https://github.com/openresty/lua-nginx-module#ngxsleep) method to sleep.
 
 [Back to TOC](#table-of-contents)
 
-## set_burst
-
-**syntax:** `obj:set_burst(burst)`
-
-Overwrites the `burst` threshold as specified in the [new](#new) method.
-
-[Back to TOC](#table-of-contents)
-
 # Author
 
-Monkey Zhang <timebug.info@gmail.com>, UPYUN Inc.
+Bean Shih <beanking77@gmail.com>
 
-Inspired from http://nginx.org/en/docs/http/ngx_http_limit_req_module.html.
+Inspired from https://github.com/openresty/lua-resty-limit-traffic/blob/master/lib/resty/limit/count.lua
 
 [Back to TOC](#table-of-contents)
 
@@ -182,7 +171,7 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
 
 # See Also
 
-* Rate Limiting with NGINX: https://www.nginx.com/blog/rate-limiting-nginx/
+* Request count Limiting with openresty: https://github.com/openresty/lua-resty-limit-traffic/blob/master/lib/resty/limit/count.md
 * the ngx_lua module: https://github.com/openresty/lua-nginx-module
 * OpenResty: https://openresty.org/
 
